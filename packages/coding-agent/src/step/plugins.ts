@@ -196,9 +196,14 @@ function isSafeName(value: string): boolean {
 	return SAFE_NAME.test(value) && value !== "." && value !== "..";
 }
 
-function isContained(root: string, candidate: string): boolean {
+export function isContained(root: string, candidate: string): boolean {
 	const relative = path.relative(path.resolve(root), path.resolve(candidate));
-	return relative === "" || (!relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+	if (relative === "") return true;
+	// A bare ".." is the root's immediate parent: it neither starts with the
+	// separator form nor is absolute, so it has to be named separately or a
+	// declaration sitting one level up reads as contained.
+	if (relative === "..") return false;
+	return !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 function normalizeRelativePath(value: unknown): string | undefined {

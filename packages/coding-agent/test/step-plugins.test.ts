@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -15,6 +15,7 @@ import {
 	ensureBuiltinMarketplace,
 	ensureBuiltinPluginsInstalled,
 	installMarketplacePlugin,
+	isContained,
 	listInstalledStepPlugins,
 	listMarketplacePlugins,
 	listMarketplaceSources,
@@ -319,6 +320,30 @@ describe("Step plugin marketplace facade", () => {
 			ui: { notify },
 		} as unknown as ExtensionCommandContext);
 		expect(notify).toHaveBeenCalled();
+	});
+});
+
+describe("isContained", () => {
+	const root = join(tmpdir(), "marketplace");
+
+	test("accepts the root itself and anything inside it", () => {
+		expect(isContained(root, root)).toBe(true);
+		expect(isContained(root, join(root, "plugins", "demo"))).toBe(true);
+	});
+
+	test("rejects the root's immediate parent", () => {
+		// path.relative yields a bare ".." here, which is neither the
+		// separator-prefixed form nor absolute, so it has to be named on its own.
+		expect(isContained(root, dirname(root))).toBe(false);
+	});
+
+	test("rejects anything further above the root", () => {
+		expect(isContained(root, join(root, "..", "other"))).toBe(false);
+		expect(isContained(root, join(root, "..", ".."))).toBe(false);
+	});
+
+	test("rejects a sibling reached by traversal", () => {
+		expect(isContained(root, join(root, "plugins", "..", "..", "sibling"))).toBe(false);
 	});
 });
 
