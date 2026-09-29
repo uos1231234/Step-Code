@@ -1,3 +1,4 @@
+import path from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -14,6 +15,7 @@ import { createStoredMcpOAuthProvider, hasStoredMcpOAuthCredential } from "./mcp
 import {
 	defaultStepPluginsDir,
 	ensureBuiltinPluginsInstalled,
+	isContained,
 	listStepPluginDirectories,
 	provisionBuiltinPlugin,
 	provisionInstallCommand,
@@ -294,11 +296,17 @@ export async function discoverStepMcpServers(cwd: string, projectTrusted: boolea
 				if (!isRecord(value) || typeof value.command !== "string" || !value.command.trim()) continue;
 				const name = `${parsed.manifest.id}__${serverName}`;
 				if (seen.has(name)) continue;
+				// Overlaps #204 at this line: it wraps the same call in
+				// `applyPluginHeaderAliases`. If it lands first, move the anchor
+				// around its result —
+				//   resolvePluginServerCwd(pluginDir, applyPluginHeaderAliases(normalizeDeclaration(value), value))
+				// — and keep it on the outside: `applyPluginHeaderAliases` returns
+				// the same object on one branch and a new one on the other, so an
+				// anchor built in front of it would be dropped.
+				const declaration = resolvePluginServerCwd(pluginDir, normalizeDeclaration(value));
+				if (!declaration) continue;
 				seen.add(name);
-				const discovered: DiscoveredServer = {
-					name,
-					declaration: normalizeDeclaration(value),
-				};
+				const discovered: DiscoveredServer = { name, declaration };
 				if (parsed.manifest.provision) discovered.provision = parsed.manifest.provision;
 				result.push(discovered);
 			}
@@ -342,6 +350,45 @@ function normalizeDeclaration(value: Record<string, unknown>): ServerDeclaration
 		};
 	}
 	return declaration;
+}
+
+/**
+ * Anchor a plugin's stdio server to the plugin root as its working directory.
+ *
+ * A plugin declares its server beside its own manifest, so a relative entry in
+ * `args` is relative to the plugin directory — but nothing tells the transport
+ * that, and an omitted `cwd` leaves the child inheriting the `step` process's own
+ * working directory, where that path almost never exists. A manifest may still
+ * name an explicit `cwd`: an absolute one is the author's own choice, a relative
+ * one is read against the plugin root.
+ *
+ * Returns `undefined` for a `cwd` that escapes the plugin, so the caller drops
+ * the server instead of starting it somewhere the manifest did not name. That is
+ * the same call a string `mcpServers` path gets in #204's `resolveDeclaredServers`,
+ * and the reason the inline form refuses rather than falls back to the root: a
+ * silent rewrite would discard what the author asked for and move the failure
+ * further from its cause.
+ *
+ * A manifest `cwd` reaches this unnormalised — `normalizeDeclaration` only
+ * trims it — so it relies on `isContained` rejecting an escape rather than on
+ * an upstream filter.
+ *
+ * Scoped to the plugin discovery path on purpose. `normalizeDeclaration` is also
+ * used by the global `config.toml` `mcp_servers` loop above, where a relative
+ * `cwd` means the process directory rather than a plugin.
+ */
+export function resolvePluginServerCwd(
+	pluginDir: string,
+	declaration: ServerDeclaration,
+): ServerDeclaration | undefined {
+	// Only a stdio server is spawned in a working directory.
+	if (typeof declaration.command !== "string") return undefined;
+	// An absolute `cwd` is the author's explicit choice; leave it untouched.
+	if (declaration.cwd && path.isAbsolute(declaration.cwd)) return declaration;
+	const root = path.resolve(pluginDir);
+	const resolved = path.resolve(root, declaration.cwd ?? ".");
+	if (!isContained(root, resolved)) return undefined;
+	return { ...declaration, cwd: resolved };
 }
 
 export async function connectStepMcpServer(
