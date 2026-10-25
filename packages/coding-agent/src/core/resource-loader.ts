@@ -344,9 +344,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	extendResources(paths: ResourceExtensionPaths): void {
-		const skillPaths = this.normalizeExtensionPaths(paths.skillPaths ?? []);
-		const promptPaths = this.normalizeExtensionPaths(paths.promptPaths ?? []);
-		const themePaths = this.normalizeExtensionPaths(paths.themePaths ?? []);
+		// Extensions reach the loader through this channel after reload() has already applied
+		// the no* flags, so the flags have to be enforced here as well. The guards in
+		// updateSkillsFromPaths and friends only short-circuit on an empty path list, which
+		// makes them "nothing to do" rather than a policy check.
+		const skillPaths = this.noSkills ? [] : this.normalizeExtensionPaths(paths.skillPaths ?? []);
+		const promptPaths = this.noPromptTemplates ? [] : this.normalizeExtensionPaths(paths.promptPaths ?? []);
+		const themePaths = this.noThemes ? [] : this.normalizeExtensionPaths(paths.themePaths ?? []);
 
 		for (const entry of skillPaths) {
 			this.extensionSkillSourceInfos.set(entry.path, createSourceInfo(entry.path, entry.metadata));

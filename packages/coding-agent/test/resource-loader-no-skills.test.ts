@@ -105,3 +105,77 @@ describe("--no-skills discovery", () => {
 		expect(loader.getSkills().skills).toEqual([]);
 	});
 });
+
+describe("--no-skills on extension-contributed resources", () => {
+	function extensionMeta(baseDir: string) {
+		return { source: "extension:extra", scope: "temporary", origin: "top-level", baseDir } as const;
+	}
+
+	function writePlugin(root: string): { skillDir: string; promptFile: string; promptDir: string } {
+		const skillDir = join(root, "plugin", "skills");
+		const promptDir = join(root, "plugin", "commands");
+		const promptFile = join(promptDir, "extra.md");
+		writeSkill(join(skillDir, "plugin-skill"), "plugin-skill");
+		mkdirSync(promptDir, { recursive: true });
+		writeFileSync(promptFile, `---\ndescription: Extra prompt\n---\nExtra prompt content`);
+		return { skillDir, promptFile, promptDir };
+	}
+
+	it("drops extension-contributed skills and prompt templates when the flags are set", async () => {
+		const root = mkdtempSync(join(tmpdir(), "step-ext-flags-"));
+		roots.push(root);
+		const cwd = join(root, "project");
+		const agentDir = join(root, "agent");
+		mkdirSync(cwd, { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		const { skillDir, promptFile, promptDir } = writePlugin(root);
+
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			noSkills: true,
+			noPromptTemplates: true,
+			noExtensions: true,
+			noContextFiles: true,
+			settingsManager: SettingsManager.inMemory(),
+		});
+		await loader.reload();
+		expect(loader.getSkills().skills).toEqual([]);
+
+		loader.extendResources({
+			skillPaths: [{ path: skillDir, metadata: extensionMeta(join(root, "plugin")) }],
+			promptPaths: [{ path: promptFile, metadata: extensionMeta(promptDir) }],
+		});
+
+		expect(loader.getSkills().skills).toEqual([]);
+		expect(loader.getPrompts().prompts).toEqual([]);
+	});
+
+	it("still loads extension-contributed skills when the flags are not set", async () => {
+		const root = mkdtempSync(join(tmpdir(), "step-ext-noflags-"));
+		roots.push(root);
+		const cwd = join(root, "project");
+		const agentDir = join(root, "agent");
+		mkdirSync(cwd, { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		const { skillDir, promptFile, promptDir } = writePlugin(root);
+
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			noContextFiles: true,
+			settingsManager: SettingsManager.inMemory(),
+		});
+		await loader.reload();
+
+		loader.extendResources({
+			skillPaths: [{ path: skillDir, metadata: extensionMeta(join(root, "plugin")) }],
+			promptPaths: [{ path: promptFile, metadata: extensionMeta(promptDir) }],
+		});
+
+		// The machine's real ~/.agents/skills is also scanned (package-manager.ts uses
+		// getHomeDir(), not the storage root), so assert presence rather than exact contents.
+		expect(loader.getSkills().skills.map((skill) => skill.name)).toContain("plugin-skill");
+		expect(loader.getPrompts().prompts.length).toBeGreaterThan(0);
+	});
+});
